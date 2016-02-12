@@ -41,29 +41,29 @@ const KeyOrder = "--ucl-keyorder--"
 var UclExportKeyOrder bool = true
 
 var Ucldebug bool = true
-func debug(a... interface{}) {
+
+func debug(a ...interface{}) {
 	if Ucldebug {
 		fmt.Println(a)
 	}
 }
 
-
 type Parser struct {
 	scanner *scanner
 
-	ucl     map[string] interface{}
+	ucl map[string]interface{}
 
-	tags    []*tag
-	tagsi   int
+	tags  []*tag
+	tagsi int
 
-	done    bool
-	err     error
+	done bool
+	err  error
 }
 
 func NewParser(r io.Reader) *Parser {
 	p := &Parser{
 		scanner: newScanner(r),
-		ucl: make(map[string] interface{}),
+		ucl:     make(map[string]interface{}),
 	}
 
 	return p
@@ -87,7 +87,7 @@ func (p *Parser) nexttag() (*tag, error) {
 		for ; p.tagsi < len(p.tags); p.tagsi++ {
 			m := p.tags[p.tagsi]
 			if m.state == WHITESPACE || m.state == LCOMMENT ||
-			   m.state == HCOMMENT {
+				m.state == HCOMMENT {
 				continue
 			}
 			p.tagsi++
@@ -96,7 +96,6 @@ func (p *Parser) nexttag() (*tag, error) {
 		}
 	}
 }
-
 
 func (p *Parser) parsevalue(t *tag, parent interface{}) (interface{}, error) {
 	var err error
@@ -119,7 +118,7 @@ restart:
 		}
 
 		if nt == nil || nt.state == SEMICOL || nt.state == COMMA {
-			return string(t.val), nil;  // leaf value; done
+			return string(t.val), nil // leaf value; done
 		}
 		if nt.state == BRACECLOSE || nt.state == BRACKETCLOSE {
 			nt.val = t.val
@@ -127,7 +126,7 @@ restart:
 		}
 
 		// "t" is a new key tag
-		themap := make(map[string] interface{})
+		themap := make(map[string]interface{})
 		res, err := p.parsevalue(nt, parent)
 
 		if err != nil {
@@ -206,7 +205,7 @@ restart:
 	case SEMICOL, COLON, EQUAL:
 		// no value, let parent handle it
 		return nil, fmt.Errorf("Invalid tag %s line %d",
-		                       string(t.val), p.scanner.line)
+			string(t.val), p.scanner.line)
 	case COMMA:
 		t = nil
 		goto restart
@@ -225,7 +224,7 @@ restart:
 					return parent, nil
 				} else {
 					return nil, fmt.Errorf("Unexpected tag %s, line %d\n",
-					               string(restag.val), p.scanner.line)
+						string(restag.val), p.scanner.line)
 				}
 			}
 
@@ -254,7 +253,7 @@ restart:
 		// new key
 		k := string(t.val)
 
-		themap, ok := parent.(map[string] interface{})
+		themap, ok := parent.(map[string]interface{})
 		if !ok {
 			debug("not a map at tag:", k)
 			panic("...")
@@ -340,8 +339,8 @@ restart:
 		var theparent interface{}
 		var ok bool
 		if parent == nil {
-			theparent = make(map[string] interface{})
-		} else if theparent, ok = parent.(map[string] interface{}); !ok {
+			theparent = make(map[string]interface{})
+		} else if theparent, ok = parent.(map[string]interface{}); !ok {
 			if theparent, ok = parent.([]interface{}); !ok {
 				debug("Error braceopen - parent is not a map/list/nil")
 				return nil, fmt.Errorf("Invalid {, parent not nil|map|list")
@@ -370,8 +369,7 @@ restart:
 	return nil, nil
 }
 
-
-func (p *Parser) Ucl() (map[string] interface{}, error) {
+func (p *Parser) Ucl() (map[string]interface{}, error) {
 	p.parse(nil, p.ucl)
 
 	if p.err == io.EOF {
