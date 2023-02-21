@@ -209,7 +209,7 @@ EODX;
 		C struct {
 			D int `json:"d"`
 		} `json:"c"`
-		NilVal *int `json:"nilval"`
+		NilVal *int `json:"nilVal"`
 	}
 	ss.A = 3
 	ss.B = "Something"

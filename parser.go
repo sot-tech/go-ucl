@@ -29,22 +29,26 @@
 package ucl
 
 import (
+	"errors"
 	"fmt"
 	"io"
 )
 
-// The order of the keys as they appear in the file; this allows the user to
+// KeyOrder is order of the keys as they appear in the file; this allows the user to
 // have their own order for items.
 const KeyOrder = "--ucl-keyorder--"
 
-// Allow to disable constructing the KeyOrder arrays
-var UclExportKeyOrder bool = true
-
-var Ucldebug bool = true
+var (
+	errUnexpectedMultiline = errors.New("unexpected multi-line string")
+	errUnexpectedBracket   = errors.New("unexpected \"{\", parent not nil|map|list")
+	Debug                  = true
+	// ExportKeyOrder allows to disable constructing the KeyOrder arrays
+	ExportKeyOrder = true
+)
 
 func debug(a ...interface{}) {
-	if Ucldebug {
-		fmt.Println(a)
+	if Debug {
+		fmt.Println(a...)
 	}
 }
 
@@ -53,8 +57,8 @@ type Parser struct {
 
 	ucl map[string]interface{}
 
-	tags  []*tag
-	tagsi int
+	tags      []*tag
+	tagsIndex int
 
 	done bool
 	err  error
@@ -69,7 +73,7 @@ func NewParser(r io.Reader) *Parser {
 	return p
 }
 
-func (p *Parser) nexttag() (*tag, error) {
+func (p *Parser) nextTag() (*tag, error) {
 	var err error
 
 	if p.done {
@@ -77,32 +81,32 @@ func (p *Parser) nexttag() (*tag, error) {
 	}
 
 	for {
-		if p.tagsi >= len(p.tags) {
-			p.tags, err = p.scanner.nexttags()
+		if p.tagsIndex >= len(p.tags) {
+			p.tags, err = p.scanner.nextTags()
 			if err != nil {
 				return nil, err
 			}
-			p.tagsi = 0
+			p.tagsIndex = 0
 		}
-		for ; p.tagsi < len(p.tags); p.tagsi++ {
-			m := p.tags[p.tagsi]
+		for ; p.tagsIndex < len(p.tags); p.tagsIndex++ {
+			m := p.tags[p.tagsIndex]
 			if m.state == WHITESPACE || m.state == LCOMMENT ||
 				m.state == HCOMMENT {
 				continue
 			}
-			p.tagsi++
+			p.tagsIndex++
 
 			return m, nil
 		}
 	}
 }
 
-func (p *Parser) parsevalue(t *tag, parent interface{}) (interface{}, error) {
+func (p *Parser) parseValue(t *tag, parent interface{}) (interface{}, error) {
 	var err error
 
 restart:
 	if t == nil {
-		t, err = p.nexttag()
+		t, err = p.nextTag()
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +116,7 @@ restart:
 	case TAG, QUOTE, VQUOTE, SLASH:
 		// this could be either a value or a new key
 		// have to see if the followon tags exist
-		nt, err := p.nexttag()
+		nt, err := p.nextTag()
 		if err != nil {
 			return nil, err
 		}
@@ -126,19 +130,19 @@ restart:
 		}
 
 		// "t" is a new key tag
-		themap := make(map[string]interface{})
-		res, err := p.parsevalue(nt, parent)
+		mapValue := make(map[string]interface{})
+		res, err := p.parseValue(nt, parent)
 
 		if err != nil {
 			debug("Error:", err)
 			return nil, err
 		}
 
-		korder := make([]string, 1, 16)
-		korder[0] = string(t.val)
-		themap[KeyOrder] = korder
-		themap[string(t.val)] = res
-		return themap, nil
+		kOrder := make([]string, 1, 16)
+		kOrder[0] = string(t.val)
+		mapValue[KeyOrder] = kOrder
+		mapValue[string(t.val)] = res
+		return mapValue, nil
 
 	case SEMICOL:
 		// no value, let parent handle it
@@ -171,8 +175,8 @@ restart:
 		return parent, nil
 
 	case BRACKETOPEN:
-		thelist := make([]interface{}, 0, 32)
-		res, err := p.parselist(nil, thelist)
+		listValue := make([]interface{}, 0, 32)
+		res, err := p.parseList(nil, listValue)
 		return res, err
 
 	case BRACKETCLOSE:
@@ -187,11 +191,11 @@ restart:
 	return nil, nil
 }
 
-func (p *Parser) parselist(t *tag, parent []interface{}) (ret interface{}, err error) {
+func (p *Parser) parseList(t *tag, parent []interface{}) (ret interface{}, err error) {
 	// Parse until bracket close
 restart:
 	if t == nil {
-		t, err = p.nexttag()
+		t, err = p.nextTag()
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +208,7 @@ restart:
 
 	case SEMICOL, COLON, EQUAL:
 		// no value, let parent handle it
-		return nil, fmt.Errorf("Invalid tag %s line %d",
+		return nil, fmt.Errorf("invalid tag %s line %d",
 			string(t.val), p.scanner.line)
 	case COMMA:
 		t = nil
@@ -212,19 +216,19 @@ restart:
 
 	default:
 		// append child
-		res, err := p.parsevalue(t, nil)
+		res, err := p.parseValue(t, nil)
 		if err != nil {
 			debug("error parsing value:", err)
 			return nil, err
 		} else {
-			if restag, ok := res.(*tag); ok {
-				// result is a tag; parsevalue didn't handle it
-				if restag.state == BRACKETCLOSE {
-					parent = append(parent, string(restag.val))
+			if resTag, ok := res.(*tag); ok {
+				// result is a tag; parseValue didn't handle it
+				if resTag.state == BRACKETCLOSE {
+					parent = append(parent, string(resTag.val))
 					return parent, nil
 				} else {
 					return nil, fmt.Errorf("Unexpected tag %s, line %d\n",
-						string(restag.val), p.scanner.line)
+						string(resTag.val), p.scanner.line)
 				}
 			}
 
@@ -242,7 +246,7 @@ func (p *Parser) parse(t *tag, parent interface{}) (ret interface{}, err error) 
 
 restart:
 	if t == nil {
-		t, err = p.nexttag()
+		t, err = p.nextTag()
 		if err != nil {
 			return nil, err
 		}
@@ -253,67 +257,67 @@ restart:
 		// new key
 		k := string(t.val)
 
-		themap, ok := parent.(map[string]interface{})
+		mapParent, ok := parent.(map[string]interface{})
 		if !ok {
 			debug("not a map at tag:", k)
 			panic("...")
 		}
 
-		korder_intf, ok := themap[KeyOrder]
-		var korder []string
+		kOrderIntf, ok := mapParent[KeyOrder]
+		var kOrder []string
 		if !ok {
-			if UclExportKeyOrder {
+			if ExportKeyOrder {
 				// only initialize if requested
-				korder = make([]string, 0, 16)
+				kOrder = make([]string, 0, 16)
 			}
 		} else {
-			korder, ok = korder_intf.([]string)
+			kOrder, ok = kOrderIntf.([]string)
 			if !ok {
 				debug("key order is not slice")
 				return nil, fmt.Errorf("map[--keyorder--] is not slice")
 			}
 		}
 
-		res, err := p.parsevalue(nil, nil)
+		res, err := p.parseValue(nil, nil)
 		if err != nil {
-			if restag, ok := res.(*tag); ok {
-				if restag.state == SEMICOL {
+			if resTag, ok := res.(*tag); ok {
+				if resTag.state == SEMICOL {
 					// no value for key, make it == null
 					res = nil
 				}
 			} else {
-				debug("parsevalue error:", err)
+				debug("parseValue error:", err)
 				return nil, err
 			}
-		} else if restag, ok := res.(*tag); ok {
-			// result is a tag; parsevalue didn't handle it
-			if restag.state != BRACECLOSE {
-				t = restag
+		} else if resTag, ok := res.(*tag); ok {
+			// result is a tag; parseValue didn't handle it
+			if resTag.state != BRACECLOSE {
+				t = resTag
 				goto restart
 			}
-			res = string(restag.val)
-			t = restag
+			res = string(resTag.val)
+			t = resTag
 		}
 
-		if mapitems, ok := themap[k]; ok {
-			if childarray, ok := mapitems.([]interface{}); ok {
+		if mapItems, ok := mapParent[k]; ok {
+			if childArray, ok := mapItems.([]interface{}); ok {
 				// already an array, so append
-				childarray = append(childarray, res)
-				themap[k] = childarray
+				childArray = append(childArray, res)
+				mapParent[k] = childArray
 			} else {
-				childarray := make([]interface{}, 1, 2)
-				childarray[0] = themap[k]
-				childarray = append(childarray, res)
-				themap[k] = childarray
+				childArray = make([]interface{}, 1, 2)
+				childArray[0] = mapParent[k]
+				childArray = append(childArray, res)
+				mapParent[k] = childArray
 			}
 		} else {
 			// doesn't exist
-			if cap(korder) != 0 {
+			if cap(kOrder) != 0 {
 				// only update KeyOrder if it was initialized
-				korder = append(korder, k)
-				themap[KeyOrder] = korder
+				kOrder = append(kOrder, k)
+				mapParent[KeyOrder] = kOrder
 			}
-			themap[k] = res
+			mapParent[k] = res
 		}
 		if t.state == BRACECLOSE {
 			// map completed
@@ -330,23 +334,23 @@ restart:
 
 	case MLSTRING:
 		// shouldn't happen
-		return nil, fmt.Errorf("Unexpected multi-line string")
+		return nil, errUnexpectedMultiline
 
 	case BRACEOPEN:
 		// {
 		// If parent is not a map and not nil, then error
 
-		var theparent interface{}
+		var mapParent interface{}
 		var ok bool
 		if parent == nil {
-			theparent = make(map[string]interface{})
-		} else if theparent, ok = parent.(map[string]interface{}); !ok {
-			if theparent, ok = parent.([]interface{}); !ok {
+			mapParent = make(map[string]interface{})
+		} else if mapParent, ok = parent.(map[string]interface{}); !ok {
+			if mapParent, ok = parent.([]interface{}); !ok {
 				debug("Error braceopen - parent is not a map/list/nil")
-				return nil, fmt.Errorf("Invalid {, parent not nil|map|list")
+				return nil, errUnexpectedBracket
 			}
 		}
-		res, err := p.parse(nil, theparent)
+		res, err := p.parse(nil, mapParent)
 		if err != nil {
 			debug("Error parsing brace", err)
 		}
@@ -357,8 +361,8 @@ restart:
 		return parent, nil
 
 	case BRACKETOPEN:
-		thelist := make([]interface{}, 0, 32)
-		res, err := p.parselist(nil, thelist)
+		listVal := make([]interface{}, 0, 32)
+		res, err := p.parseList(nil, listVal)
 		return res, err
 
 	case BRACKETCLOSE:

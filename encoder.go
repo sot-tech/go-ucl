@@ -26,9 +26,7 @@
  * SUCH DAMAGE.
  */
 
-/*
- * Encodes an interface into UCL format
- */
+// Package ucl encodes an interface into UCL format
 package ucl
 
 import (
@@ -40,9 +38,9 @@ import (
 )
 
 const (
-	parent_map = iota
-	parent_array
-	parent_anon
+	parentMap = iota
+	parentArray
+	parentAnon
 )
 
 type encoder struct {
@@ -50,24 +48,24 @@ type encoder struct {
 	indenter string
 	newline  string
 	tag      string
-	nilval   string
+	nilVal   string
 }
 
 // Encode v as UCL.
 // indenter = string to use as indentation
 // tag = if v has struct components, then use tag to search for the tag's key
-// nilval = (verbatim) string representing null value in output
-func Encode(w io.Writer, v interface{}, indenter, tag, nilval string) error {
+// nilVal = (verbatim) string representing null value in output
+func Encode(w io.Writer, v interface{}, indenter, tag, nilVal string) error {
 	newline := ""
 	if indenter != "" {
 		newline = "\n"
 	}
 
-	e := &encoder{w, indenter, newline, tag, nilval}
-	return e.doencode(reflect.ValueOf(v), parent_map, 0)
+	e := &encoder{w, indenter, newline, tag, nilVal}
+	return e.doEncode(reflect.ValueOf(v), parentMap, 0)
 }
 
-func (e *encoder) doencode(v reflect.Value, parenttype, indent int) error {
+func (e *encoder) doEncode(v reflect.Value, parentType, indent int) error {
 	var indents string
 	for i := 0; i < indent; i++ {
 		indents += e.indenter
@@ -85,13 +83,13 @@ func (e *encoder) doencode(v reflect.Value, parenttype, indent int) error {
 		if v.Type().Key().Kind() != reflect.String {
 			return fmt.Errorf("<map> %v %s", v, "does not use string key")
 		}
-		return e.encodeMap(v, parenttype, indent)
+		return e.encodeMap(v, parentType, indent)
 	case reflect.Struct:
-		return e.encodeStruct(v, parenttype, indent)
+		return e.encodeStruct(v, parentType, indent)
 	case reflect.Slice, reflect.Array:
-		return e.encodeSlice(v, parenttype, indent)
+		return e.encodeSlice(v, indent)
 	default:
-		return e.encodeScalar(v, parenttype, indent)
+		return e.encodeScalar(v, parentType, indent)
 	}
 }
 
@@ -108,7 +106,7 @@ func encodeStr(s string) string {
 	return s
 }
 
-func (e *encoder) encodeMap(v reflect.Value, parenttype, indent int) (err error) {
+func (e *encoder) encodeMap(v reflect.Value, parentType, indent int) (err error) {
 	var indents string
 	for i := 0; i < indent; i++ {
 		indents += e.indenter
@@ -117,14 +115,14 @@ func (e *encoder) encodeMap(v reflect.Value, parenttype, indent int) (err error)
 	// test if keyorder key exist
 	mv := v.MapIndex(reflect.ValueOf(KeyOrder))
 	if mv.Kind() != 0 {
-		if korder, ok := mv.Interface().([]string); ok {
-			for i := range korder {
+		if kOrder, ok := mv.Interface().([]string); ok {
+			for i := range kOrder {
 				if i > 0 {
-					fmt.Fprintf(e.w, e.newline)
+					fmt.Fprint(e.w, e.newline)
 				}
-				fmt.Fprintf(e.w, "%s%s", indents, encodeStr(korder[i]))
+				fmt.Fprint(e.w, indents, encodeStr(kOrder[i]))
 
-				cv := v.MapIndex(reflect.ValueOf(korder[i]))
+				cv := v.MapIndex(reflect.ValueOf(kOrder[i]))
 				if cv.Kind() == reflect.Ptr {
 					cv = cv.Elem()
 				}
@@ -132,28 +130,28 @@ func (e *encoder) encodeMap(v reflect.Value, parenttype, indent int) (err error)
 					cv = cv.Elem()
 				}
 				if cv.Kind() != reflect.Invalid {
-					fmt.Fprintf(e.w, " ")
+					fmt.Fprint(e.w, " ")
 				}
 
 				switch cv.Kind() {
 				case reflect.Slice, reflect.Array:
-					err = e.doencode(cv, parent_map, indent)
+					err = e.doEncode(cv, parentMap, indent)
 				case reflect.Map, reflect.Struct:
-					fmt.Fprintf(e.w, "{%s", e.newline)
-					err = e.doencode(cv, parent_map, indent+1)
-					fmt.Fprintf(e.w, "%s}", indents)
+					fmt.Fprint(e.w, "{", e.newline)
+					err = e.doEncode(cv, parentMap, indent+1)
+					fmt.Fprint(e.w, indents, "}")
 				default:
-					err = e.doencode(cv, parent_map, indent+1)
+					err = e.doEncode(cv, parentMap, indent+1)
 				}
 				if err != nil {
 					break
 				}
-				if parenttype != parent_array {
-					fmt.Fprintf(e.w, ";")
+				if parentType != parentArray {
+					fmt.Fprint(e.w, ";")
 				}
 			}
-			if err == nil && len(korder) > 0 {
-				fmt.Fprintf(e.w, e.newline)
+			if err == nil && len(kOrder) > 0 {
+				fmt.Fprint(e.w, e.newline)
 			}
 			return err
 		}
@@ -161,9 +159,9 @@ func (e *encoder) encodeMap(v reflect.Value, parenttype, indent int) (err error)
 	keys := v.MapKeys()
 	for i := range keys {
 		if i > 0 {
-			fmt.Fprintf(e.w, e.newline)
+			fmt.Fprint(e.w, e.newline)
 		}
-		fmt.Fprintf(e.w, "%s%s", indents,
+		fmt.Fprint(e.w, indents,
 			encodeStr(keys[i].Interface().(string)))
 
 		cv := v.MapIndex(keys[i])
@@ -174,34 +172,34 @@ func (e *encoder) encodeMap(v reflect.Value, parenttype, indent int) (err error)
 			cv = cv.Elem()
 		}
 		if cv.Kind() != reflect.Invalid {
-			fmt.Fprintf(e.w, " ")
+			fmt.Fprint(e.w, " ")
 		}
 
 		switch cv.Kind() {
 		case reflect.Slice, reflect.Array:
-			err = e.doencode(cv, parent_map, indent)
+			err = e.doEncode(cv, parentMap, indent)
 		case reflect.Map, reflect.Struct:
-			fmt.Fprintf(e.w, "{%s", e.newline)
-			err = e.doencode(cv, parent_map, indent+1)
-			fmt.Fprintf(e.w, "%s}", indents)
+			fmt.Fprint(e.w, "{", e.newline)
+			err = e.doEncode(cv, parentMap, indent+1)
+			fmt.Fprint(e.w, indents, "}")
 		default:
-			err = e.doencode(cv, parent_map, indent+1)
+			err = e.doEncode(cv, parentMap, indent+1)
 		}
 		if err != nil {
 			break
 		}
-		if parenttype != parent_array {
-			fmt.Fprintf(e.w, ";")
+		if parentType != parentArray {
+			fmt.Fprint(e.w, ";")
 		}
 	}
 	if err == nil && len(keys) > 0 {
-		fmt.Fprintf(e.w, e.newline)
+		fmt.Fprint(e.w, e.newline)
 	}
 
 	return err
 }
 
-func (e *encoder) encodeStruct(v reflect.Value, parenttype, indent int) (err error) {
+func (e *encoder) encodeStruct(v reflect.Value, parentType, indent int) (err error) {
 	var indents string
 	for i := 0; i < indent; i++ {
 		indents += e.indenter
@@ -212,7 +210,7 @@ func (e *encoder) encodeStruct(v reflect.Value, parenttype, indent int) (err err
 	nonl := false
 	for i := 0; i < nfields; i++ {
 		if cnt > 0 && !nonl {
-			fmt.Fprintf(e.w, e.newline)
+			fmt.Fprint(e.w, e.newline)
 		}
 		nonl = false
 
@@ -232,7 +230,7 @@ func (e *encoder) encodeStruct(v reflect.Value, parenttype, indent int) (err err
 			}
 
 			// Drill down into anonymous field and attempt encoding of it
-			err = e.encodeStruct(cv, parent_anon, indent)
+			err = e.encodeStruct(cv, parentAnon, indent)
 			if err != nil {
 				return err
 			}
@@ -247,55 +245,55 @@ func (e *encoder) encodeStruct(v reflect.Value, parenttype, indent int) (err err
 
 		if tag == "" {
 			if sf.Name[0] >= 'A' && sf.Name[0] <= 'Z' {
-				fmt.Fprintf(e.w, "%s%s", indents, sf.Name)
+				fmt.Fprint(e.w, indents, sf.Name)
 			} else {
 				continue
 			}
 		} else {
 			// split at "," and get first
-			fmt.Fprintf(e.w, "%s%s", indents,
+			fmt.Fprint(e.w, indents,
 				encodeStr(strings.SplitN(tag, ",", 2)[0]))
 		}
 
 		if cv.Kind() != reflect.Invalid {
-			fmt.Fprintf(e.w, " ")
+			fmt.Fprint(e.w, " ")
 		}
 
 		switch cv.Kind() {
 		case reflect.Slice, reflect.Array:
-			err = e.doencode(cv, parent_map, indent)
+			err = e.doEncode(cv, parentMap, indent)
 		case reflect.Map, reflect.Struct:
-			fmt.Fprintf(e.w, "{%s", e.newline)
-			err = e.doencode(cv, parent_map, indent+1)
-			fmt.Fprintf(e.w, "%s}", indents)
+			fmt.Fprint(e.w, "{", e.newline)
+			err = e.doEncode(cv, parentMap, indent+1)
+			fmt.Fprint(e.w, indents, "}")
 		default:
-			err = e.doencode(cv, parent_map, indent+1)
+			err = e.doEncode(cv, parentMap, indent+1)
 		}
 		if err != nil {
 			break
 		}
-		fmt.Fprintf(e.w, ";")
+		fmt.Fprint(e.w, ";")
 	}
-	if err == nil && nfields > 0 && parenttype != parent_array &&
-		parenttype != parent_anon {
-		fmt.Fprintf(e.w, e.newline)
+	if err == nil && nfields > 0 && parentType != parentArray &&
+		parentType != parentAnon {
+		fmt.Fprint(e.w, e.newline)
 	}
 
 	return err
 }
 
-func (e *encoder) encodeSlice(v reflect.Value, parenttype, indent int) (err error) {
+func (e *encoder) encodeSlice(v reflect.Value, indent int) (err error) {
 	var indents string
 	for i := 0; i < indent; i++ {
 		indents += e.indenter
 	}
 
-	fmt.Fprintf(e.w, "[")
+	fmt.Fprint(e.w, "[")
 	for i := 0; i < v.Len(); i++ {
 		if i == 0 {
-			fmt.Fprintf(e.w, e.newline)
+			fmt.Fprint(e.w, e.newline)
 		} else {
-			fmt.Fprintf(e.w, ",%s", e.newline)
+			fmt.Fprint(e.w, ",", e.newline)
 		}
 
 		cv := v.Index(i)
@@ -308,35 +306,33 @@ func (e *encoder) encodeSlice(v reflect.Value, parenttype, indent int) (err erro
 
 		switch cv.Kind() {
 		case reflect.Slice, reflect.Array:
-			err = e.doencode(cv, parent_array, indent)
+			err = e.doEncode(cv, parentArray, indent)
 		case reflect.Map, reflect.Struct:
-			fmt.Fprintf(e.w, "%s%s{%s", e.indenter, indents, e.newline)
-			err = e.doencode(cv, parent_array, indent+2)
-			fmt.Fprintf(e.w, "%s%s}", e.indenter, indents)
+			fmt.Fprint(e.w, e.indenter, indents, "{", e.newline)
+			err = e.doEncode(cv, parentArray, indent+2)
+			fmt.Fprint(e.w, e.indenter, indents, "}")
 		default:
-			err = e.doencode(cv, parent_array, indent+1)
+			err = e.doEncode(cv, parentArray, indent+1)
 		}
 		if err != nil {
 			break
 		}
 	}
 	if v.Len() > 0 {
-		fmt.Fprintf(e.w, e.newline)
-		fmt.Fprintf(e.w, "%s]", indents)
-	} else {
-		fmt.Fprintf(e.w, "]")
+		fmt.Fprintf(e.w, e.newline, indents)
 	}
+	fmt.Fprint(e.w, "]")
 	return err
 }
 
-func (e *encoder) encodeScalar(v reflect.Value, parenttype, indent int) (err error) {
+func (e *encoder) encodeScalar(v reflect.Value, parentType, indent int) (err error) {
 	var indents string
 	for i := 0; i < indent; i++ {
 		indents += e.indenter
 	}
 
-	if parenttype == parent_array {
-		fmt.Fprintf(e.w, "%s", indents)
+	if parentType == parentArray {
+		fmt.Fprint(e.w, indents)
 	}
 
 	if v.Kind() == reflect.Interface {
@@ -345,7 +341,7 @@ func (e *encoder) encodeScalar(v reflect.Value, parenttype, indent int) (err err
 
 	switch v.Kind() {
 	case reflect.Bool:
-		fmt.Fprintf(e.w, "%t", v.Bool())
+		fmt.Fprint(e.w, v.Bool())
 	case reflect.String:
 		mlstring := false
 		s := v.String()
@@ -364,27 +360,27 @@ func (e *encoder) encodeScalar(v reflect.Value, parenttype, indent int) (err err
 		}
 		if nl > 3 {
 			mlstring = true
-			fmt.Fprintf(e.w, "<<EOSTR\n")
+			fmt.Fprint(e.w, "<<EOSTR\n")
 		} else if len(s) == 0 {
-			fmt.Fprintf(e.w, `""`)
+			fmt.Fprint(e.w, `""`)
 			break
 		} else if s[0] != '/' {
-			fmt.Fprintf(e.w, encodeStr(s))
+			fmt.Fprint(e.w, encodeStr(s))
 			break
 		}
 
-		fmt.Fprintf(e.w, "%s", s)
+		fmt.Fprint(e.w, s)
 		if mlstring {
-			fmt.Fprintf(e.w, "\nEOSTR")
+			fmt.Fprint(e.w, "\nEOSTR")
 		}
 
 	case reflect.Invalid:
-		if e.nilval != "" {
-			fmt.Fprintf(e.w, " %s", e.nilval)
+		if e.nilVal != "" {
+			fmt.Fprint(e.w, " ", e.nilVal)
 		}
 
 	default:
-		fmt.Fprintf(e.w, "%v", v.Interface())
+		fmt.Fprint(e.w, v.Interface())
 	}
 	return nil
 }

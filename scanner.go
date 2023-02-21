@@ -68,37 +68,34 @@ const (
 )
 
 const (
-	skip_white = 0x01
-	skip_sep   = 0x02
+	skipWhite = 0x01
+	skipSep   = 0x02
 )
 
 type tag struct {
 	val   []byte
 	state int
-
-	flag int // used by parser
 }
 
-var UnexpectedEOF = errors.New("Unexpected EOF")
+var ErrUnexpectedEOF = errors.New("unexpected EOF")
 
 type scanner struct {
-	r      io.Reader
-	buf    []byte
-	bufmax int
-	bufi   int
+	r        io.Reader
+	buf      []byte
+	bufMax   int
+	bufIndex int
 
 	depth []byte // current depth of scopes, e.g. [ '[', '{' ]
 	// to determine when the scope closes
-	curtag []byte
-	curch  byte
+	curTag []byte
 
 	state   int
-	skipsep int
+	skipSep int
 
 	line int // current input line
 
-	mlstring_tag []byte // "EOD" tag of ML string
-	curline      []byte
+	mlStringTag []byte // "EOD" tag of ML string
+	curLine     []byte
 
 	err error
 }
@@ -107,7 +104,7 @@ func newScanner(rio io.Reader) *scanner {
 	return &scanner{
 		r:      rio,
 		depth:  make([]byte, 0, 1024),
-		curtag: make([]byte, 0, 1024),
+		curTag: make([]byte, 0, 1024),
 		line:   1,
 	}
 }
@@ -152,7 +149,7 @@ func (s *scanner) curdepth() byte {
 }
 
 func (s *scanner) discard() {
-	s.curtag = make([]byte, 0, 1024)
+	s.curTag = make([]byte, 0, 1024)
 }
 
 func (s *scanner) maketag(v []byte, state int) (t *tag) {
@@ -171,36 +168,34 @@ func (s *scanner) maketag(v []byte, state int) (t *tag) {
 		} else {
 			c = '\''
 		}
-		qs, err := unquote(string(s.curtag), c)
+		qs, err := unquote(string(s.curTag), c)
 		if err != nil {
 			s.err = fmt.Errorf("unable to unquote \"%s\", line %d",
-				string(s.curtag), s.line)
+				string(s.curTag), s.line)
 			return nil
 		}
 		t.val = []byte(qs)
-		s.curtag = s.curtag[:0]
-	} else if len(s.curtag) > 0 {
+		s.curTag = s.curTag[:0]
+	} else if len(s.curTag) > 0 {
 		t.state = s.state
-		t.val = s.curtag
-		s.curtag = make([]byte, 0, 1024)
+		t.val = s.curTag
+		s.curTag = make([]byte, 0, 1024)
 	}
 	return t
 }
 
-func (s *scanner) nexttags() (tags []*tag, err error) {
-	err = nil
-
+func (s *scanner) nextTags() (tags []*tag, err error) {
 	if s.buf == nil {
 		s.buf = make([]byte, 4096)
 	}
 
 	tags = make([]*tag, 0, 32)
 	for {
-		if s.bufi >= s.bufmax {
-			s.bufmax, err = s.r.Read(s.buf)
-			if s.bufmax == 0 {
+		if s.bufIndex >= s.bufMax {
+			s.bufMax, err = s.r.Read(s.buf)
+			if s.bufMax == 0 {
 				if len(s.depth) > 0 {
-					return nil, UnexpectedEOF
+					return nil, ErrUnexpectedEOF
 				} else {
 					return nil, io.EOF
 				}
@@ -210,11 +205,11 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				return nil, err
 			}
 
-			s.bufi = 0
+			s.bufIndex = 0
 		}
 
-		c := s.buf[s.bufi]
-		s.bufi++
+		c := s.buf[s.bufIndex]
+		s.bufIndex++
 
 		if c == '\n' {
 			s.line++
@@ -230,7 +225,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 						return nil, s.err
 					}
 				}
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
 				s.state = WHITESPACE
 				if len(tags) > 0 {
 					return tags, nil
@@ -239,7 +234,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 			}
 
 			// emit now that end of whitespace reached
-			if len(s.curtag) > 0 && s.curtag[len(s.curtag)-1] <= ' ' {
+			if len(s.curTag) > 0 && s.curTag[len(s.curTag)-1] <= ' ' {
 				s.discard()
 				/*
 					tags = append(tags, s.maketag(nil, 0))
@@ -250,7 +245,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 			}
 
 			if c != '"' && c != '\'' {
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
 			}
 			switch c {
 			case '[', ']':
@@ -273,11 +268,11 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			case '(':
 				s.state = TAG
-				s.skipsep = skip_white | skip_sep
+				s.skipSep = skipWhite | skipSep
 
 			case ')':
 				s.state = TAG
-				s.skipsep = skip_white | skip_sep
+				s.skipSep = skipWhite | skipSep
 
 			case '{', '}':
 				if c == '{' {
@@ -310,7 +305,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			case '<':
 				s.state = TAG
-				s.skipsep = skip_white | skip_sep
+				s.skipSep = skipWhite | skipSep
 
 			case '=', ':':
 				if len(tags) == 0 ||
@@ -319,7 +314,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					return nil, fmt.Errorf("unexpected '%c' at line %d", c, s.line)
 				}
 				s.state = TAG
-				s.skipsep = skip_white
+				s.skipSep = skipWhite
 
 			case ',':
 				if s.curdepth() == '[' {
@@ -346,18 +341,18 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 			default:
 				// all other characters commence a new tag
 				s.state = TAG
-				s.skipsep = skip_white | skip_sep
+				s.skipSep = skipWhite | skipSep
 			}
 
 		case TAG:
 			// read until either ; { or '\n'
 			// if {, then split tag into different keys and send each tag
 			// as a TAG
-			if len(s.curtag) > 0 {
-				if s.curtag[len(s.curtag)-1] == '<' {
+			if len(s.curTag) > 0 {
+				if s.curTag[len(s.curTag)-1] == '<' {
 					// possibly multiline string if next character
 					// is alphanum
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 					s.state = MAYBE_MLSTRING
 					break
 				}
@@ -365,7 +360,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			if c == '{' {
 				// split up tag into individual strings, separated by ' '
-				fields := strings.Split(string(s.curtag), " ")
+				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
 						tags = append(tags, s.maketag([]byte(fields[f]), TAG))
@@ -374,8 +369,8 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 						}
 					}
 				}
-				s.curtag = s.curtag[:0]
-				s.curtag = append(s.curtag, c)
+				s.curTag = s.curTag[:0]
+				s.curTag = append(s.curTag, c)
 				s.scopeadd(c)
 				s.state = BRACEOPEN
 				tags = append(tags, s.maketag(nil, 0))
@@ -391,9 +386,9 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				}
 
 				// scan backwards and terminate previous tag
-				for i := len(s.curtag) - 1; i >= 0; i-- {
-					if s.curtag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curtag[0:i+1], TAG))
+				for i := len(s.curTag) - 1; i >= 0; i-- {
+					if s.curTag[i] > ' ' {
+						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -408,21 +403,21 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.curtag = s.curtag[:0]
+				s.curTag = s.curTag[:0]
 				s.state = WHITESPACE
 				return tags, nil
 
 			} else if c == '\'' || c == '"' {
-				for i := len(s.curtag) - 1; i >= 0; i-- {
-					if s.curtag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curtag[0:i+1], TAG))
+				for i := len(s.curTag) - 1; i >= 0; i-- {
+					if s.curTag[i] > ' ' {
+						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
 						break
 					}
 				}
-				s.curtag = s.curtag[:0]
+				s.curTag = s.curTag[:0]
 				if c == '\'' {
 					s.state = VQUOTE
 				} else {
@@ -432,7 +427,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			} else if c == '[' {
 				// split up tag into individual strings, separated by ' '
-				fields := strings.Split(string(s.curtag), " ")
+				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
 						tags = append(tags, s.maketag([]byte(fields[f]), TAG))
@@ -441,8 +436,8 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 						}
 					}
 				}
-				s.curtag = s.curtag[:0]
-				s.curtag = append(s.curtag, c)
+				s.curTag = s.curTag[:0]
+				s.curTag = append(s.curTag, c)
 				s.scopeadd(c)
 				s.state = BRACKETOPEN
 				tags = append(tags, s.maketag(nil, 0))
@@ -458,9 +453,9 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				}
 
 				// scan backwards and terminate previous tag
-				for i := len(s.curtag) - 1; i >= 0; i-- {
-					if s.curtag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curtag[0:i+1], TAG))
+				for i := len(s.curTag) - 1; i >= 0; i-- {
+					if s.curTag[i] > ' ' {
+						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -474,7 +469,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.curtag = s.curtag[:0]
+				s.curTag = s.curTag[:0]
 				s.state = WHITESPACE
 				return tags, nil
 
@@ -484,8 +479,8 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.curtag = s.curtag[:0]
-				s.curtag = append(s.curtag, c)
+				s.curTag = s.curTag[:0]
+				s.curTag = append(s.curTag, c)
 				s.state = SEMICOL
 				tags = append(tags, s.maketag(nil, 0))
 				if s.err != nil {
@@ -496,15 +491,15 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			} else if c == ',' {
 				if s.curdepth() != '[' && s.curdepth() != '{' {
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 					break
 				}
 				tags = append(tags, s.maketag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.curtag = s.curtag[:0]
-				s.curtag = append(s.curtag, c)
+				s.curTag = s.curTag[:0]
+				s.curTag = append(s.curTag, c)
 				s.state = COMMA
 				tags = append(tags, s.maketag(nil, 0))
 				if s.err != nil {
@@ -515,7 +510,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			} else if c == '\n' {
 				// TODO: option for semicolon forced termination
-				//s.curtag = append(s.curtag, ' ')
+				//s.curTag = append(s.curTag, ' ')
 				tags = append(tags, s.maketag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
@@ -525,7 +520,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					return nil, s.err
 				}
 				s.state = WHITESPACE
-				s.curtag = s.curtag[:0]
+				s.curTag = s.curTag[:0]
 				return tags, nil
 
 			} else if c <= ' ' {
@@ -534,20 +529,20 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-				} else if s.skipsep&skip_white == 0 {
-					s.curtag = append(s.curtag, c)
+				} else if s.skipSep&skipWhite == 0 {
+					s.curTag = append(s.curTag, c)
 				}
 
 			} else if c == ':' || c == '=' {
-				if s.skipsep&skip_sep != 0 {
+				if s.skipSep&skipSep != 0 {
 					// only skip the first seen : or =, after that
 					// it is considered a part of the tag's value
 					tags = append(tags, s.maketag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.curtag = s.curtag[:0]
-					s.curtag = append(s.curtag, c)
+					s.curTag = s.curTag[:0]
+					s.curTag = append(s.curTag, c)
 					if c == ':' {
 						s.state = COLON
 					} else {
@@ -558,10 +553,10 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 						return nil, s.err
 					}
 					s.state = TAG
-					s.skipsep &= ^skip_sep
+					s.skipSep &= ^skipSep
 				} else {
-					s.curtag = append(s.curtag, c)
-					s.skipsep &= ^skip_white
+					s.curTag = append(s.curTag, c)
+					s.skipSep &= ^skipWhite
 				}
 
 			} else if c == '\\' {
@@ -569,19 +564,19 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					s.line)
 
 			} else {
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
 				if len(tags) > 0 {
-					s.skipsep &= ^skip_white
+					s.skipSep &= ^skipWhite
 				}
 			}
 
 		case MAYBE_MLSTRING:
-			s.curtag = append(s.curtag, c)
+			s.curTag = append(s.curTag, c)
 			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
 				c >= '0' && c <= '9' {
 				s.state = MLSTRING_PREP
-				s.curline = make([]byte, 0, 128)
-				s.curline = append(s.curline, c)
+				s.curLine = make([]byte, 0, 128)
+				s.curLine = append(s.curLine, c)
 			} else {
 				s.state = TAG
 			}
@@ -592,32 +587,32 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
 				c >= '0' && c <= '9' {
 				// XXX Send the tag key
-				if s.curtag[0] != '<' {
+				if s.curTag[0] != '<' {
 					ti := 0
-					for ; ti < len(s.curtag); ti++ {
-						if s.curtag[ti] <= ' ' {
+					for ; ti < len(s.curTag); ti++ {
+						if s.curTag[ti] <= ' ' {
 							break
 						}
 					}
 					te := ti
-					for ; te < len(s.curtag); te++ {
-						if s.curtag[te] == '<' {
+					for ; te < len(s.curTag); te++ {
+						if s.curTag[te] == '<' {
 							break
 						}
-						if s.curtag[te] > ' ' && s.curtag[te] != '=' {
-							return nil, fmt.Errorf("Line %d %c %d %s", s.line, s.curtag[te], te, string(s.curtag))
+						if s.curTag[te] > ' ' && s.curTag[te] != '=' {
+							return nil, fmt.Errorf("Line %d %c %d %s", s.line, s.curTag[te], te, string(s.curTag))
 						}
 					}
-					tags = append(tags, s.maketag(s.curtag[:ti], TAG))
+					tags = append(tags, s.maketag(s.curTag[:ti], TAG))
 					if s.err != nil {
 						return nil, s.err
 					}
 
-					s.curtag = s.curtag[te:]
+					s.curTag = s.curTag[te:]
 				}
 
-				s.curtag = append(s.curtag, c)
-				s.curline = append(s.curline, c)
+				s.curTag = append(s.curTag, c)
+				s.curLine = append(s.curLine, c)
 
 				if len(tags) > 0 {
 					return tags, nil
@@ -625,10 +620,10 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 			} else {
 				// end of "EOD" tag
-				s.mlstring_tag = make([]byte, len(s.curline))
-				copy(s.mlstring_tag, s.curline)
-				s.curline = nil
-				s.curtag = s.curtag[:0]
+				s.mlStringTag = make([]byte, len(s.curLine))
+				copy(s.mlStringTag, s.curLine)
+				s.curLine = nil
+				s.curTag = s.curTag[:0]
 				if c == '\n' {
 					s.state = MLSTRING
 				} else {
@@ -645,25 +640,25 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 
 		case MLSTRING:
 			// read until we see "EOD" on its own line
-			if s.curline == nil {
-				s.curline = make([]byte, 0, 128)
+			if s.curLine == nil {
+				s.curLine = make([]byte, 0, 128)
 			}
 			if c == ';' || c == '\n' {
-				if bytes.Equal(s.curline, s.mlstring_tag) {
+				if bytes.Equal(s.curLine, s.mlStringTag) {
 					// "EOD" reached
-					s.curtag = s.curtag[:len(s.curtag)-1]
+					s.curTag = s.curTag[:len(s.curTag)-1]
 					tags = append(tags, s.maketag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
 					s.state = WHITESPACE
 				} else {
-					s.curtag = append(s.curtag, s.curline...)
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, s.curLine...)
+					s.curTag = append(s.curTag, c)
 				}
-				s.curline = nil
+				s.curLine = nil
 			} else {
-				s.curline = append(s.curline, c)
+				s.curLine = append(s.curLine, c)
 			}
 			if len(tags) > 0 {
 				return tags, nil
@@ -672,17 +667,17 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 		case QUOTE, VQUOTE:
 			// read until quote completes, allow for multi-line
 			if c == '\\' {
-				if s.bufi >= s.bufmax {
-					s.curtag = append(s.curtag, c)
+				if s.bufIndex >= s.bufMax {
+					s.curTag = append(s.curTag, c)
 					break
 				}
-				s.curtag = append(s.curtag, c)
-				c = s.buf[s.bufi]
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
+				c = s.buf[s.bufIndex]
+				s.curTag = append(s.curTag, c)
 				if c == '\n' {
 					s.line++
 				}
-				s.bufi++
+				s.bufIndex++
 
 			} else if (s.state == QUOTE && c == '"') ||
 				(s.state == VQUOTE && c == '\'') {
@@ -691,33 +686,33 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					return nil, s.err
 				}
 				s.state = TAG
-				s.skipsep = skip_white | skip_sep
+				s.skipSep = skipWhite | skipSep
 			} else {
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
 			}
 
 		case SLASH:
 			// read until next slash or whitespace. regex with whitespace
 			// have an outer quote
 
-			if len(s.curtag) == 1 && c == '*' {
-				s.curtag = append(s.curtag, c)
+			if len(s.curTag) == 1 && c == '*' {
+				s.curTag = append(s.curTag, c)
 				s.state = LCOMMENT
 			} else {
 				if c == '\\' {
 					// Escape sequence
-					if s.bufi+1 < s.bufmax {
-						s.curtag = append(s.curtag, c)
-						s.bufi++
-						s.curtag = append(s.curtag, s.buf[s.bufi])
-						s.bufi++
+					if s.bufIndex+1 < s.bufMax {
+						s.curTag = append(s.curTag, c)
+						s.bufIndex++
+						s.curTag = append(s.curTag, s.buf[s.bufIndex])
+						s.bufIndex++
 						break
 					}
 				}
 
 				switch c {
 				case '/':
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 					tags = append(tags, s.maketag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
@@ -738,7 +733,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 					s.state = WHITESPACE
 					return tags, nil
 
@@ -748,12 +743,12 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 					s.state = TAG
 					return tags, nil
 
 				default:
-					s.curtag = append(s.curtag, c)
+					s.curTag = append(s.curTag, c)
 				}
 			}
 
@@ -767,17 +762,17 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 				s.state = WHITESPACE
 				return tags, nil
 			} else {
-				s.curtag = append(s.curtag, c)
+				s.curTag = append(s.curTag, c)
 			}
 
 		case LCOMMENT:
-			s.curtag = append(s.curtag, c)
+			s.curTag = append(s.curTag, c)
 			if c == '*' {
 				s.state = LCOMMENT_CLOSING
 			}
 
 		case LCOMMENT_CLOSING:
-			s.curtag = append(s.curtag, c)
+			s.curTag = append(s.curTag, c)
 			if c == '/' {
 				s.state = LCOMMENT
 				tags = append(tags, s.maketag(nil, 0))
@@ -794,7 +789,7 @@ func (s *scanner) nexttags() (tags []*tag, err error) {
 }
 
 func (s *scanner) LatestTag() (string, int) {
-	return string(s.curtag), s.state
+	return string(s.curTag), s.state
 }
 
 // From go-src:strconv.Unquote but modified so that a quote character can
@@ -806,7 +801,7 @@ func unquote(s string, quote byte) (t string, err error) {
 	}
 
 	if quote == '`' {
-		if contains(s, '`') {
+		if strings.ContainsRune(s, '`') {
 			return "", strconv.ErrSyntax
 		}
 		return s, nil
@@ -816,7 +811,7 @@ func unquote(s string, quote byte) (t string, err error) {
 	}
 
 	// Is it trivial?  Avoid allocation.
-	if !contains(s, '\\') && !contains(s, quote) {
+	if !strings.ContainsRune(s, '\\') && !strings.ContainsRune(s, rune(quote)) {
 		return s, nil
 	}
 
@@ -836,13 +831,4 @@ func unquote(s string, quote byte) (t string, err error) {
 		}
 	}
 	return string(buf), nil
-}
-
-func contains(s string, c byte) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			return true
-		}
-	}
-	return false
 }
