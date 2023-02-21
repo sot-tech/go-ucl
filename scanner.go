@@ -109,11 +109,11 @@ func newScanner(rio io.Reader) *scanner {
 	}
 }
 
-func (s *scanner) scopeadd(c byte) {
+func (s *scanner) scopeAdd(c byte) {
 	s.depth = append(s.depth, c)
 }
 
-func (s *scanner) scopereduce(c byte) bool {
+func (s *scanner) scopeReduce(c byte) bool {
 	if len(s.depth) == 0 {
 		return false
 	}
@@ -141,7 +141,7 @@ func (s *scanner) scopereduce(c byte) bool {
 	return found
 }
 
-func (s *scanner) curdepth() byte {
+func (s *scanner) curDepth() byte {
 	if len(s.depth) == 0 {
 		return 0
 	}
@@ -152,7 +152,7 @@ func (s *scanner) discard() {
 	s.curTag = make([]byte, 0, 1024)
 }
 
-func (s *scanner) maketag(v []byte, state int) (t *tag) {
+func (s *scanner) makeTag(v []byte, state int) (t *tag) {
 	t = new(tag)
 	if v != nil {
 		if len(v) > 0 {
@@ -220,7 +220,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			if c <= ' ' {
 				if s.state != WHITESPACE {
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -237,7 +237,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			if len(s.curTag) > 0 && s.curTag[len(s.curTag)-1] <= ' ' {
 				s.discard()
 				/*
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -250,16 +250,16 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			switch c {
 			case '[', ']':
 				if c == '[' {
-					s.scopeadd(c)
+					s.scopeAdd(c)
 					s.state = BRACKETOPEN
 				} else {
-					if !s.scopereduce(c) {
+					if !s.scopeReduce(c) {
 						return nil, fmt.Errorf("misplaced ] at line %d", s.line)
 					}
 					s.state = BRACKETCLOSE
 				}
 
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -276,15 +276,15 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			case '{', '}':
 				if c == '{' {
-					s.scopeadd(c)
+					s.scopeAdd(c)
 					s.state = BRACEOPEN
 				} else {
-					if !s.scopereduce(c) {
+					if !s.scopeReduce(c) {
 						return nil, fmt.Errorf("misplaced } at line %d", s.line)
 					}
 					s.state = BRACECLOSE
 				}
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -317,9 +317,9 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				s.skipSep = skipWhite
 
 			case ',':
-				if s.curdepth() == '[' {
+				if s.curDepth() == '[' {
 					s.state = COMMA
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -331,7 +331,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			case ';':
 				s.state = SEMICOL
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -363,7 +363,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
-						tags = append(tags, s.maketag([]byte(fields[f]), TAG))
+						tags = append(tags, s.makeTag([]byte(fields[f]), TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -371,9 +371,9 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
-				s.scopeadd(c)
+				s.scopeAdd(c)
 				s.state = BRACEOPEN
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -381,25 +381,25 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				return tags, nil
 
 			} else if c == '}' {
-				if s.curdepth() != '{' {
+				if s.curDepth() != '{' {
 					return nil, fmt.Errorf("unexpected } at line %d", s.line)
 				}
 
 				// scan backwards and terminate previous tag
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
 						break
 					}
 				}
-				if !s.scopereduce(c) {
+				if !s.scopeReduce(c) {
 					panic("shouldn't happen")
 				}
 
-				tags = append(tags, s.maketag([]byte("}"), BRACECLOSE))
+				tags = append(tags, s.makeTag([]byte("}"), BRACECLOSE))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -410,7 +410,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			} else if c == '\'' || c == '"' {
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -430,7 +430,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
-						tags = append(tags, s.maketag([]byte(fields[f]), TAG))
+						tags = append(tags, s.makeTag([]byte(fields[f]), TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -438,9 +438,9 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
-				s.scopeadd(c)
+				s.scopeAdd(c)
 				s.state = BRACKETOPEN
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -448,24 +448,24 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				return tags, nil
 
 			} else if c == ']' {
-				if s.curdepth() != '[' {
+				if s.curDepth() != '[' {
 					return nil, fmt.Errorf("unexpected } at line %d", s.line)
 				}
 
 				// scan backwards and terminate previous tag
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.maketag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
 						if s.err != nil {
 							return nil, s.err
 						}
 						break
 					}
 				}
-				if !s.scopereduce(c) {
+				if !s.scopeReduce(c) {
 					panic("shouldn't happen")
 				}
-				tags = append(tags, s.maketag([]byte("]"), BRACKETCLOSE))
+				tags = append(tags, s.makeTag([]byte("]"), BRACKETCLOSE))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -475,14 +475,14 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			} else if c == ';' {
 				// Terminate
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
 				s.state = SEMICOL
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -490,18 +490,18 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				return tags, nil
 
 			} else if c == ',' {
-				if s.curdepth() != '[' && s.curdepth() != '{' {
+				if s.curDepth() != '[' && s.curDepth() != '{' {
 					s.curTag = append(s.curTag, c)
 					break
 				}
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
 				s.state = COMMA
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -511,11 +511,11 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			} else if c == '\n' {
 				// TODO: option for semicolon forced termination
 				//s.curTag = append(s.curTag, ' ')
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				tags = append(tags, s.maketag([]byte(";"), SEMICOL))
+				tags = append(tags, s.makeTag([]byte(";"), SEMICOL))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -525,7 +525,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			} else if c <= ' ' {
 				if len(tags) == 0 {
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -537,7 +537,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				if s.skipSep&skipSep != 0 {
 					// only skip the first seen : or =, after that
 					// it is considered a part of the tag's value
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -548,7 +548,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					} else {
 						s.state = EQUAL
 					}
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -603,7 +603,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 							return nil, fmt.Errorf("Line %d %c %d %s", s.line, s.curTag[te], te, string(s.curTag))
 						}
 					}
-					tags = append(tags, s.maketag(s.curTag[:ti], TAG))
+					tags = append(tags, s.makeTag(s.curTag[:ti], TAG))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -647,7 +647,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				if bytes.Equal(s.curLine, s.mlStringTag) {
 					// "EOD" reached
 					s.curTag = s.curTag[:len(s.curTag)-1]
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -681,7 +681,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 			} else if (s.state == QUOTE && c == '"') ||
 				(s.state == VQUOTE && c == '\'') {
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -713,7 +713,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				switch c {
 				case '/':
 					s.curTag = append(s.curTag, c)
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -721,7 +721,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					return tags, nil
 
 				case '\n':
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -729,7 +729,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					return tags, nil
 
 				case ' ':
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -739,7 +739,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 
 				case ';':
 					s.state = TAG
-					tags = append(tags, s.maketag(nil, 0))
+					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -755,7 +755,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 		case HCOMMENT:
 			// single line comment
 			if c == '\n' {
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
@@ -775,7 +775,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			s.curTag = append(s.curTag, c)
 			if c == '/' {
 				s.state = LCOMMENT
-				tags = append(tags, s.maketag(nil, 0))
+				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}

@@ -75,13 +75,13 @@ EODX
 	b.StopTimer()
 	for n := 0; n < b.N; n++ {
 		bb := bytes.NewBuffer([]byte(s))
-		p := NewParser(bb)
+		p := NewDecoder(bb)
 		b.StartTimer()
-		ucl, uerr := p.Ucl()
+		ucl, uerr := p.Decode()
 		b.StopTimer()
 		if uerr == nil || uerr == io.EOF {
 			if _, ok := ucl["section"]; !ok {
-				b.Fatal("Ucl parse failed", ucl)
+				b.Fatal("Decode parse failed", ucl)
 			}
 		}
 	}
@@ -146,9 +146,9 @@ EODX;
 `
 	var err error
 	bb := bytes.NewBuffer([]byte(s))
-	p := NewParser(bb)
+	p := NewDecoder(bb)
 	tstart := time.Now().UnixNano()
-	ucl, uerr := p.Ucl()
+	ucl, uerr := p.Decode()
 	tend := time.Now().UnixNano()
 	tdiff := tend - tstart
 	t.Log("Total time: ", tdiff, "ns", "--->err:", uerr)
@@ -170,8 +170,8 @@ EODX;
 
 	b1 := ibuf.Bytes()
 
-	p = NewParser(&ibuf)
-	ucl, uerr = p.Ucl()
+	p = NewDecoder(&ibuf)
+	ucl, uerr = p.Decode()
 
 	var obuf bytes.Buffer
 	Encode(&obuf, ucl, "   ", "json", "")

@@ -41,18 +41,13 @@ const KeyOrder = "--ucl-keyorder--"
 var (
 	errUnexpectedMultiline = errors.New("unexpected multi-line string")
 	errUnexpectedBracket   = errors.New("unexpected \"{\", parent not nil|map|list")
-	Debug                  = true
+	errKeyOrderNotSlice    = errors.New("map[--keyorder--] is not slice")
+	errParentNotMap        = errors.New("parent is not map type")
 	// ExportKeyOrder allows to disable constructing the KeyOrder arrays
 	ExportKeyOrder = true
 )
 
-func debug(a ...interface{}) {
-	if Debug {
-		fmt.Println(a...)
-	}
-}
-
-type Parser struct {
+type Decoder struct {
 	scanner *scanner
 
 	ucl map[string]interface{}
@@ -61,19 +56,16 @@ type Parser struct {
 	tagsIndex int
 
 	done bool
-	err  error
 }
 
-func NewParser(r io.Reader) *Parser {
-	p := &Parser{
+func NewDecoder(r io.Reader) *Decoder {
+	return &Decoder{
 		scanner: newScanner(r),
 		ucl:     make(map[string]interface{}),
 	}
-
-	return p
 }
 
-func (p *Parser) nextTag() (*tag, error) {
+func (p *Decoder) nextTag() (*tag, error) {
 	var err error
 
 	if p.done {
@@ -101,7 +93,7 @@ func (p *Parser) nextTag() (*tag, error) {
 	}
 }
 
-func (p *Parser) parseValue(t *tag, parent interface{}) (interface{}, error) {
+func (p *Decoder) parseValue(t *tag, parent interface{}) (interface{}, error) {
 	var err error
 
 restart:
@@ -134,7 +126,6 @@ restart:
 		res, err := p.parseValue(nt, parent)
 
 		if err != nil {
-			debug("Error:", err)
 			return nil, err
 		}
 
@@ -164,11 +155,7 @@ restart:
 
 	case BRACEOPEN:
 		// {, new map
-		res, err := p.parse(t, parent)
-		if err != nil {
-			debug("parse error:", err)
-		}
-		return res, err
+		return p.parse(t, parent)
 
 	case BRACECLOSE:
 		// return until we hit the stack that has BRACEOPEN
@@ -191,7 +178,7 @@ restart:
 	return nil, nil
 }
 
-func (p *Parser) parseList(t *tag, parent []interface{}) (ret interface{}, err error) {
+func (p *Decoder) parseList(t *tag, parent []interface{}) (ret interface{}, err error) {
 	// Parse until bracket close
 restart:
 	if t == nil {
@@ -218,7 +205,6 @@ restart:
 		// append child
 		res, err := p.parseValue(t, nil)
 		if err != nil {
-			debug("error parsing value:", err)
 			return nil, err
 		} else {
 			if resTag, ok := res.(*tag); ok {
@@ -239,10 +225,7 @@ restart:
 	}
 }
 
-func (p *Parser) parse(t *tag, parent interface{}) (ret interface{}, err error) {
-	defer func() {
-		p.err = err
-	}()
+func (p *Decoder) parse(t *tag, parent interface{}) (ret interface{}, err error) {
 
 restart:
 	if t == nil {
@@ -254,13 +237,10 @@ restart:
 
 	switch t.state {
 	case TAG, QUOTE, VQUOTE, SLASH:
-		// new key
-		k := string(t.val)
 
 		mapParent, ok := parent.(map[string]interface{})
 		if !ok {
-			debug("not a map at tag:", k)
-			panic("...")
+			return nil, errParentNotMap
 		}
 
 		kOrderIntf, ok := mapParent[KeyOrder]
@@ -273,8 +253,7 @@ restart:
 		} else {
 			kOrder, ok = kOrderIntf.([]string)
 			if !ok {
-				debug("key order is not slice")
-				return nil, fmt.Errorf("map[--keyorder--] is not slice")
+				return nil, errKeyOrderNotSlice
 			}
 		}
 
@@ -286,7 +265,6 @@ restart:
 					res = nil
 				}
 			} else {
-				debug("parseValue error:", err)
 				return nil, err
 			}
 		} else if resTag, ok := res.(*tag); ok {
@@ -295,10 +273,10 @@ restart:
 				t = resTag
 				goto restart
 			}
-			res = string(resTag.val)
-			t = resTag
+			res, t = string(resTag.val), resTag
 		}
-
+		// new key
+		k := string(t.val)
 		if mapItems, ok := mapParent[k]; ok {
 			if childArray, ok := mapItems.([]interface{}); ok {
 				// already an array, so append
@@ -346,24 +324,17 @@ restart:
 			mapParent = make(map[string]interface{})
 		} else if mapParent, ok = parent.(map[string]interface{}); !ok {
 			if mapParent, ok = parent.([]interface{}); !ok {
-				debug("Error braceopen - parent is not a map/list/nil")
 				return nil, errUnexpectedBracket
 			}
 		}
-		res, err := p.parse(nil, mapParent)
-		if err != nil {
-			debug("Error parsing brace", err)
-		}
-		return res, err
+		return p.parse(nil, mapParent)
 
 	case BRACECLOSE:
 		// map finished
 		return parent, nil
 
 	case BRACKETOPEN:
-		listVal := make([]interface{}, 0, 32)
-		res, err := p.parseList(nil, listVal)
-		return res, err
+		return p.parseList(nil, make([]interface{}, 0, 32))
 
 	case BRACKETCLOSE:
 		// list finished
@@ -373,11 +344,10 @@ restart:
 	return nil, nil
 }
 
-func (p *Parser) Ucl() (map[string]interface{}, error) {
-	p.parse(nil, p.ucl)
-
-	if p.err == io.EOF {
-		p.err = nil
+func (p *Decoder) Decode() (map[string]interface{}, error) {
+	_, err := p.parse(nil, p.ucl)
+	if errors.Is(err, io.EOF) {
+		err = nil
 	}
-	return p.ucl, p.err
+	return p.ucl, err
 }
