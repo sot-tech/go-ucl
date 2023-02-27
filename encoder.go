@@ -42,6 +42,10 @@ const (
 	parentMap = iota
 	parentArray
 	parentAnon
+)
+
+// Default encoder properties
+const (
 	DefaultTag           = "ucl"
 	DefaultLineSeparator = "\n"
 	DefaultNilValue      = "nil"
@@ -63,6 +67,7 @@ var (
 	baEOL        = []byte("\nEOSTR")
 )
 
+// Encoder holds internal state of marshaled data
 type Encoder struct {
 	w       io.Writer
 	indent  []byte
@@ -71,7 +76,8 @@ type Encoder struct {
 	nilVal  []byte
 }
 
-// Encode encodes v to byte array
+// Encode encodes v to byte array with default parameters
+// (indent, line separator and tag)
 func Encode(v interface{}) (out []byte, err error) {
 	bb := new(bytes.Buffer)
 	if err = NewEncoder(bb).Encode(v); err == nil {
@@ -192,18 +198,18 @@ func (e *Encoder) encodeMap(v reflect.Value, parentType, indent int) (err error)
 	// test if keyorder key exist
 	mv := v.MapIndex(reflect.ValueOf(KeyOrder))
 	if mv.Kind() != reflect.Invalid {
-		if kOrder, ok := mv.Interface().([]string); ok {
-			for i := range kOrder {
+		if keyOrder, ok := mv.Interface().([]string); ok {
+			for i := range keyOrder {
 				if i > 0 {
 					if err = e.write(e.lineSep); err != nil {
 						return
 					}
 				}
-				if err = e.write(indents, encodeStr(kOrder[i])); err != nil {
+				if err = e.write(indents, encodeStr(keyOrder[i])); err != nil {
 					return
 				}
 
-				cv := v.MapIndex(reflect.ValueOf(kOrder[i]))
+				cv := v.MapIndex(reflect.ValueOf(keyOrder[i]))
 				if cv.Kind() == reflect.Ptr {
 					cv = cv.Elem()
 				}
@@ -240,7 +246,7 @@ func (e *Encoder) encodeMap(v reflect.Value, parentType, indent int) (err error)
 					}
 				}
 			}
-			if len(kOrder) > 0 {
+			if len(keyOrder) > 0 {
 				err = e.write(e.lineSep)
 			}
 			return

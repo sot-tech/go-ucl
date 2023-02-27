@@ -31,6 +31,7 @@ package ucl
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -77,9 +78,9 @@ EODX
 		bb := bytes.NewBuffer([]byte(s))
 		p := NewDecoder(bb)
 		b.StartTimer()
-		ucl, uerr := p.Decode()
+		ucl, err := p.Decode()
 		b.StopTimer()
-		if uerr == nil || uerr == io.EOF {
+		if err == nil || errors.Is(err, io.EOF) {
 			if _, ok := ucl["section"]; !ok {
 				b.Fatal("Decode parse failed", ucl)
 			}
@@ -149,6 +150,9 @@ EODX;
 	p := NewDecoder(bb)
 	tstart := time.Now().UnixNano()
 	ucl, uerr := p.Decode()
+	if uerr != nil {
+		t.Error(err)
+	}
 	tend := time.Now().UnixNano()
 	tdiff := tend - tstart
 	t.Log("Total time: ", tdiff, "ns", "--->err:", uerr)
@@ -156,25 +160,46 @@ EODX;
 	var b []byte
 	b, err = json.MarshalIndent(ucl, "", "   ")
 	if err != nil {
-		t.Log("Error marshling ucl", err, uerr)
+		t.Error("Error marshaling ucl", err, uerr)
 	} else {
 		t.Log("RESULT:\n", string(b), uerr)
 	}
 
 	os.Stdout.Write([]byte("ENCODE >>\n"))
-	Encode(os.Stdout, ucl, "\t", "json", "")
+	e := NewEncoder(os.Stdout)
+	e.SetIndent("\t")
+	e.SetTag("json")
+	e.SetNilValue("")
+	if err = e.Encode(ucl); err != nil {
+		t.Error(err)
+	}
 
 	// Byte-level accuracy test
 	var ibuf bytes.Buffer
-	Encode(&ibuf, ucl, "   ", "json", "")
+	e = NewEncoder(&ibuf)
+	e.SetIndent("   ")
+	e.SetTag("json")
+	e.SetNilValue("")
+	if err = e.Encode(ucl); err != nil {
+		t.Error(err)
+	}
 
 	b1 := ibuf.Bytes()
 
 	p = NewDecoder(&ibuf)
 	ucl, uerr = p.Decode()
+	if uerr != nil {
+		t.Error(err)
+	}
 
 	var obuf bytes.Buffer
-	Encode(&obuf, ucl, "   ", "json", "")
+	e = NewEncoder(&obuf)
+	e.SetIndent("   ")
+	e.SetTag("json")
+	e.SetNilValue("")
+	if err = e.Encode(ucl); err != nil {
+		t.Error(err)
+	}
 
 	b2 := obuf.Bytes()
 	if len(b1) != len(b2) {
@@ -217,6 +242,12 @@ EODX;
 	ss.anon = new(anon)
 	ss.anon.Anon = "anon value"
 	ibuf.Reset()
-	Encode(&ibuf, &ss, "   ", "json", `""`)
+	e = NewEncoder(&ibuf)
+	e.SetIndent("   ")
+	e.SetTag("json")
+	e.SetNilValue("")
+	if err = e.Encode(&ss); err != nil {
+		t.Error(err)
+	}
 	t.Log("\n" + ibuf.String())
 }

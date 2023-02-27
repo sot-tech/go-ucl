@@ -25,11 +25,11 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+
 package ucl
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -37,34 +37,32 @@ import (
 	"unicode/utf8"
 )
 
+// scanner terms
 const (
-	WHITESPACE = iota
-	TAG
-	SEMICOL  // semi-colon ;
-	COMMA    // ,
-	COLON    // :
-	EQUAL    // =
-	QUOTE    // double quote string
-	VQUOTE   // single quote string
-	SLASH    // regex or /* */ comment
-	HCOMMENT // # ...
-	LCOMMENT // /* ... */
-	MLSTRING // <<EOD multi-line string
+	Whitespace = iota
+	Tag
+	Semicolon // semi-colon ;
+	Comma     // ,
+	Colon     // :
+	Equal     // =
+	Quote     // double quote string
+	VQuote    // single quote string
+	Slash     // regex or /* */ comment
+	HComment  // # ...
+	LComment  // /* ... */
+	MlString  // <<EOD multi-line string
+	BraceOpen
+	BraceClose
+	BracketOpen
+	BracketClose
 
-	BRACEOPEN
-	BRACECLOSE
+	/* scanner indicators only */
 
-	BRACKETOPEN
-	BRACKETCLOSE
-
-	// scanner indicators only:
-
-	LCOMMENT_CLOSING // Not a tag, just indicator of possibly '*/'
-	// closing indicator
-	MAYBE_MLSTRING
-	MAYBE_MLSTRING2
-	MLSTRING_PREP
-	MLSTRING_HEADER_OK
+	LCommentClosing // Not a tag, just indicator of possibly '*/'
+	MaybeMlString   // closing indicator
+	MaybeMlString2
+	MlStringPrep
+	MlStringHeaderOk
 )
 
 const (
@@ -76,8 +74,6 @@ type tag struct {
 	val   []byte
 	state int
 }
-
-var ErrUnexpectedEOF = errors.New("unexpected EOF")
 
 type scanner struct {
 	r        io.Reader
@@ -160,10 +156,10 @@ func (s *scanner) makeTag(v []byte, state int) (t *tag) {
 			copy(t.val, v)
 			t.state = state
 		}
-	} else if s.state == QUOTE || s.state == VQUOTE {
+	} else if s.state == Quote || s.state == VQuote {
 		t.state = s.state
 		var c byte
-		if s.state == QUOTE {
+		if s.state == Quote {
 			c = '"'
 		} else {
 			c = '\''
@@ -192,12 +188,13 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 	tags = make([]*tag, 0, 32)
 	for {
 		if s.bufIndex >= s.bufMax {
-			s.bufMax, err = s.r.Read(s.buf)
-			if s.bufMax == 0 {
-				if len(s.depth) > 0 {
-					return nil, ErrUnexpectedEOF
-				} else {
-					return nil, io.EOF
+			if s.bufMax, err = s.r.Read(s.buf); err == nil {
+				if s.bufMax == 0 {
+					if len(s.depth) > 0 {
+						err = io.ErrUnexpectedEOF
+					} else {
+						err = io.EOF
+					}
 				}
 			}
 
@@ -216,17 +213,17 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 		}
 
 		switch s.state {
-		case WHITESPACE, BRACEOPEN, BRACECLOSE:
+		case Whitespace, BraceOpen, BraceClose:
 
 			if c <= ' ' {
-				if s.state != WHITESPACE {
+				if s.state != Whitespace {
 					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
 				}
 				s.curTag = append(s.curTag, c)
-				s.state = WHITESPACE
+				s.state = Whitespace
 				if len(tags) > 0 {
 					return tags, nil
 				}
@@ -251,109 +248,95 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			case '[', ']':
 				if c == '[' {
 					s.scopeAdd(c)
-					s.state = BRACKETOPEN
+					s.state = BracketOpen
 				} else {
 					if !s.scopeReduce(c) {
 						return nil, fmt.Errorf("misplaced ] at line %d", s.line)
 					}
-					s.state = BRACKETCLOSE
+					s.state = BracketClose
 				}
-
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			case '(':
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite | skipSep
-
 			case ')':
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite | skipSep
-
 			case '{', '}':
 				if c == '{' {
 					s.scopeAdd(c)
-					s.state = BRACEOPEN
+					s.state = BraceOpen
 				} else {
 					if !s.scopeReduce(c) {
 						return nil, fmt.Errorf("misplaced } at line %d", s.line)
 					}
-					s.state = BRACECLOSE
+					s.state = BraceClose
 				}
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			case '/':
-				s.state = SLASH
-
+				s.state = Slash
 			case '"':
-				s.state = QUOTE
-
+				s.state = Quote
 			case '\'':
-				s.state = VQUOTE
-
+				s.state = VQuote
 			case '#':
-				s.state = HCOMMENT
-
+				s.state = HComment
 			case '<':
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite | skipSep
-
 			case '=', ':':
 				if len(tags) == 0 ||
-					(tags[len(tags)-1].state != QUOTE &&
-						tags[len(tags)-1].state != VQUOTE) {
+					(tags[len(tags)-1].state != Quote &&
+						tags[len(tags)-1].state != VQuote) {
 					return nil, fmt.Errorf("unexpected '%c' at line %d", c, s.line)
 				}
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite
-
 			case ',':
 				if s.curDepth() == '[' {
-					s.state = COMMA
+					s.state = Comma
 					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.state = WHITESPACE
+					s.state = Whitespace
 					return tags, nil
-				} else {
-					return nil, fmt.Errorf("unexpected ',' at line %d", s.line)
 				}
-
+				return nil, fmt.Errorf("unexpected ',' at line %d", s.line)
 			case ';':
-				s.state = SEMICOL
+				s.state = Semicolon
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
 
 			default:
 				// all other characters commence a new tag
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite | skipSep
 			}
-
-		case TAG:
+		case Tag:
 			// read until either ; { or '\n'
 			// if {, then split tag into different keys and send each tag
-			// as a TAG
+			// as a Tag
 			if len(s.curTag) > 0 {
 				if s.curTag[len(s.curTag)-1] == '<' {
 					// possibly multiline string if next character
 					// is alphanum
 					s.curTag = append(s.curTag, c)
-					s.state = MAYBE_MLSTRING
+					s.state = MaybeMlString
 					break
 				}
 			}
@@ -363,7 +346,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
-						tags = append(tags, s.makeTag([]byte(fields[f]), TAG))
+						tags = append(tags, s.makeTag([]byte(fields[f]), Tag))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -372,14 +355,13 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
 				s.scopeAdd(c)
-				s.state = BRACEOPEN
+				s.state = BraceOpen
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == '}' {
 				if s.curDepth() != '{' {
 					return nil, fmt.Errorf("unexpected } at line %d", s.line)
@@ -388,7 +370,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				// scan backwards and terminate previous tag
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], Tag))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -399,18 +381,17 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					panic("shouldn't happen")
 				}
 
-				tags = append(tags, s.makeTag([]byte("}"), BRACECLOSE))
+				tags = append(tags, s.makeTag([]byte("}"), BraceClose))
 				if s.err != nil {
 					return nil, s.err
 				}
 				s.curTag = s.curTag[:0]
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == '\'' || c == '"' {
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], Tag))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -419,18 +400,17 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				}
 				s.curTag = s.curTag[:0]
 				if c == '\'' {
-					s.state = VQUOTE
+					s.state = VQuote
 				} else {
-					s.state = QUOTE
+					s.state = Quote
 				}
 				return tags, nil
-
 			} else if c == '[' {
 				// split up tag into individual strings, separated by ' '
 				fields := strings.Split(string(s.curTag), " ")
 				for f := range fields {
 					if fields[f] != "" {
-						tags = append(tags, s.makeTag([]byte(fields[f]), TAG))
+						tags = append(tags, s.makeTag([]byte(fields[f]), Tag))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -439,14 +419,13 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
 				s.scopeAdd(c)
-				s.state = BRACKETOPEN
+				s.state = BracketOpen
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == ']' {
 				if s.curDepth() != '[' {
 					return nil, fmt.Errorf("unexpected } at line %d", s.line)
@@ -455,7 +434,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				// scan backwards and terminate previous tag
 				for i := len(s.curTag) - 1; i >= 0; i-- {
 					if s.curTag[i] > ' ' {
-						tags = append(tags, s.makeTag(s.curTag[0:i+1], TAG))
+						tags = append(tags, s.makeTag(s.curTag[0:i+1], Tag))
 						if s.err != nil {
 							return nil, s.err
 						}
@@ -465,14 +444,13 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				if !s.scopeReduce(c) {
 					panic("shouldn't happen")
 				}
-				tags = append(tags, s.makeTag([]byte("]"), BRACKETCLOSE))
+				tags = append(tags, s.makeTag([]byte("]"), BracketClose))
 				if s.err != nil {
 					return nil, s.err
 				}
 				s.curTag = s.curTag[:0]
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == ';' {
 				// Terminate
 				tags = append(tags, s.makeTag(nil, 0))
@@ -481,14 +459,13 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
-				s.state = SEMICOL
+				s.state = Semicolon
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == ',' {
 				if s.curDepth() != '[' && s.curDepth() != '{' {
 					s.curTag = append(s.curTag, c)
@@ -500,29 +477,27 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				}
 				s.curTag = s.curTag[:0]
 				s.curTag = append(s.curTag, c)
-				s.state = COMMA
+				s.state = Comma
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-
 			} else if c == '\n' {
 				// TODO: option for semicolon forced termination
-				//s.curTag = append(s.curTag, ' ')
+				// s.curTag = append(s.curTag, ' ')
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				tags = append(tags, s.makeTag([]byte(";"), SEMICOL))
+				tags = append(tags, s.makeTag([]byte(";"), Semicolon))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				s.curTag = s.curTag[:0]
 				return tags, nil
-
 			} else if c <= ' ' {
 				if len(tags) == 0 {
 					tags = append(tags, s.makeTag(nil, 0))
@@ -532,7 +507,6 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				} else if s.skipSep&skipWhite == 0 {
 					s.curTag = append(s.curTag, c)
 				}
-
 			} else if c == ':' || c == '=' {
 				if s.skipSep&skipSep != 0 {
 					// only skip the first seen : or =, after that
@@ -544,44 +518,40 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					s.curTag = s.curTag[:0]
 					s.curTag = append(s.curTag, c)
 					if c == ':' {
-						s.state = COLON
+						s.state = Colon
 					} else {
-						s.state = EQUAL
+						s.state = Equal
 					}
 					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.state = TAG
+					s.state = Tag
 					s.skipSep &= ^skipSep
 				} else {
 					s.curTag = append(s.curTag, c)
 					s.skipSep &= ^skipWhite
 				}
-
 			} else if c == '\\' {
 				return nil, fmt.Errorf("unexpected '%c' at line %d", c,
 					s.line)
-
 			} else {
 				s.curTag = append(s.curTag, c)
 				if len(tags) > 0 {
 					s.skipSep &= ^skipWhite
 				}
 			}
-
-		case MAYBE_MLSTRING:
+		case MaybeMlString:
 			s.curTag = append(s.curTag, c)
 			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
 				c >= '0' && c <= '9' {
-				s.state = MLSTRING_PREP
+				s.state = MlStringPrep
 				s.curLine = make([]byte, 0, 128)
 				s.curLine = append(s.curLine, c)
 			} else {
-				s.state = TAG
+				s.state = Tag
 			}
-
-		case MLSTRING_PREP:
+		case MlStringPrep:
 			// still on <<EOD multiline header line
 			// continue until EOL
 			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
@@ -600,10 +570,10 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 							break
 						}
 						if s.curTag[te] > ' ' && s.curTag[te] != '=' {
-							return nil, fmt.Errorf("Line %d %c %d %s", s.line, s.curTag[te], te, string(s.curTag))
+							return nil, fmt.Errorf("line %d %c %d %s", s.line, s.curTag[te], te, string(s.curTag))
 						}
 					}
-					tags = append(tags, s.makeTag(s.curTag[:ti], TAG))
+					tags = append(tags, s.makeTag(s.curTag[:ti], Tag))
 					if s.err != nil {
 						return nil, s.err
 					}
@@ -617,7 +587,6 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				if len(tags) > 0 {
 					return tags, nil
 				}
-
 			} else {
 				// end of "EOD" tag
 				s.mlStringTag = make([]byte, len(s.curLine))
@@ -625,20 +594,18 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 				s.curLine = nil
 				s.curTag = s.curTag[:0]
 				if c == '\n' {
-					s.state = MLSTRING
+					s.state = MlString
 				} else {
 					// discard junk after "EOD"
-					s.state = MLSTRING_HEADER_OK
+					s.state = MlStringHeaderOk
 				}
 			}
-
-		case MLSTRING_HEADER_OK:
+		case MlStringHeaderOk:
 			// read and skip to eol
 			if c == '\n' {
-				s.state = MLSTRING
+				s.state = MlString
 			}
-
-		case MLSTRING:
+		case MlString:
 			// read until we see "EOD" on its own line
 			if s.curLine == nil {
 				s.curLine = make([]byte, 0, 128)
@@ -651,7 +618,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.state = WHITESPACE
+					s.state = Whitespace
 				} else {
 					s.curTag = append(s.curTag, s.curLine...)
 					s.curTag = append(s.curTag, c)
@@ -663,8 +630,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 			if len(tags) > 0 {
 				return tags, nil
 			}
-
-		case QUOTE, VQUOTE:
+		case Quote, VQuote:
 			// read until quote completes, allow for multi-line
 			if c == '\\' {
 				if s.bufIndex >= s.bufMax {
@@ -678,26 +644,24 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					s.line++
 				}
 				s.bufIndex++
-
-			} else if (s.state == QUOTE && c == '"') ||
-				(s.state == VQUOTE && c == '\'') {
+			} else if (s.state == Quote && c == '"') ||
+				(s.state == VQuote && c == '\'') {
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = TAG
+				s.state = Tag
 				s.skipSep = skipWhite | skipSep
 			} else {
 				s.curTag = append(s.curTag, c)
 			}
-
-		case SLASH:
+		case Slash:
 			// read until next slash or whitespace. regex with whitespace
 			// have an outer quote
 
 			if len(s.curTag) == 1 && c == '*' {
 				s.curTag = append(s.curTag, c)
-				s.state = LCOMMENT
+				s.state = LComment
 			} else {
 				if c == '\\' {
 					// Escape sequence
@@ -717,7 +681,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.state = WHITESPACE
+					s.state = Whitespace
 					return tags, nil
 
 				case '\n':
@@ -725,7 +689,7 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 					if s.err != nil {
 						return nil, s.err
 					}
-					s.state = WHITESPACE
+					s.state = Whitespace
 					return tags, nil
 
 				case ' ':
@@ -734,56 +698,51 @@ func (s *scanner) nextTags() (tags []*tag, err error) {
 						return nil, s.err
 					}
 					s.curTag = append(s.curTag, c)
-					s.state = WHITESPACE
+					s.state = Whitespace
 					return tags, nil
 
 				case ';':
-					s.state = TAG
+					s.state = Tag
 					tags = append(tags, s.makeTag(nil, 0))
 					if s.err != nil {
 						return nil, s.err
 					}
 					s.curTag = append(s.curTag, c)
-					s.state = TAG
+					s.state = Tag
 					return tags, nil
 
 				default:
 					s.curTag = append(s.curTag, c)
 				}
 			}
-
-		case HCOMMENT:
+		case HComment:
 			// single line comment
 			if c == '\n' {
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
+				s.state = Whitespace
 				return tags, nil
-			} else {
-				s.curTag = append(s.curTag, c)
 			}
-
-		case LCOMMENT:
+			s.curTag = append(s.curTag, c)
+		case LComment:
 			s.curTag = append(s.curTag, c)
 			if c == '*' {
-				s.state = LCOMMENT_CLOSING
+				s.state = LCommentClosing
 			}
-
-		case LCOMMENT_CLOSING:
+		case LCommentClosing:
 			s.curTag = append(s.curTag, c)
 			if c == '/' {
-				s.state = LCOMMENT
+				s.state = LComment
 				tags = append(tags, s.makeTag(nil, 0))
 				if s.err != nil {
 					return nil, s.err
 				}
-				s.state = WHITESPACE
-				return tags, nil
-			} else {
-				s.state = LCOMMENT
+				s.state = Whitespace
+				return
 			}
+			s.state = LComment
 		}
 	}
 }

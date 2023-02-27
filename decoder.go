@@ -47,6 +47,7 @@ var (
 	ExportKeyOrder = true
 )
 
+// Decoder holds internal state of parsed data
 type Decoder struct {
 	scanner *scanner
 
@@ -58,6 +59,7 @@ type Decoder struct {
 	done bool
 }
 
+// NewDecoder creates new parser, which will read data from provided reader
 func NewDecoder(r io.Reader) *Decoder {
 	return &Decoder{
 		scanner: newScanner(r),
@@ -82,8 +84,8 @@ func (p *Decoder) nextTag() (*tag, error) {
 		}
 		for ; p.tagsIndex < len(p.tags); p.tagsIndex++ {
 			m := p.tags[p.tagsIndex]
-			if m.state == WHITESPACE || m.state == LCOMMENT ||
-				m.state == HCOMMENT {
+			if m.state == Whitespace || m.state == LComment ||
+				m.state == HComment {
 				continue
 			}
 			p.tagsIndex++
@@ -105,7 +107,7 @@ restart:
 	}
 
 	switch t.state {
-	case TAG, QUOTE, VQUOTE, SLASH:
+	case Tag, Quote, VQuote, Slash:
 		// this could be either a value or a new key
 		// have to see if the followon tags exist
 		nt, err := p.nextTag()
@@ -113,10 +115,10 @@ restart:
 			return nil, err
 		}
 
-		if nt == nil || nt.state == SEMICOL || nt.state == COMMA {
+		if nt == nil || nt.state == Semicolon || nt.state == Comma {
 			return string(t.val), nil // leaf value; done
 		}
-		if nt.state == BRACECLOSE || nt.state == BRACKETCLOSE {
+		if nt.state == BraceClose || nt.state == BracketClose {
 			nt.val = t.val
 			return nt, nil
 		}
@@ -124,53 +126,52 @@ restart:
 		// "t" is a new key tag
 		mapValue := make(map[string]interface{})
 		res, err := p.parseValue(nt, parent)
-
 		if err != nil {
 			return nil, err
 		}
 
-		kOrder := make([]string, 1, 16)
-		kOrder[0] = string(t.val)
-		mapValue[KeyOrder] = kOrder
+		keyOrder := make([]string, 1)
+		keyOrder[0] = string(t.val)
+		mapValue[KeyOrder] = keyOrder
 		mapValue[string(t.val)] = res
 		return mapValue, nil
 
-	case SEMICOL:
+	case Semicolon:
 		// no value, let parent handle it
 		if parent == nil {
 			return t, fmt.Errorf("unexpected ';' at line %d", p.scanner.line)
 		}
 		return parent, nil
 
-	case COMMA:
+	case Comma:
 		// no value, let parent handle it
 		if parent == nil {
 			return t, fmt.Errorf("unexpected ',' at line %d", p.scanner.line)
 		}
 		return parent, nil
 
-	case MLSTRING:
+	case MlString:
 		// this must only be a value
 		return string(t.val), nil
 
-	case BRACEOPEN:
+	case BraceOpen:
 		// {, new map
 		return p.parse(t, parent)
 
-	case BRACECLOSE:
-		// return until we hit the stack that has BRACEOPEN
+	case BraceClose:
+		// return until we hit the stack that has BraceOpen
 		return parent, nil
 
-	case BRACKETOPEN:
+	case BracketOpen:
 		listValue := make([]interface{}, 0, 32)
 		res, err := p.parseList(nil, listValue)
 		return res, err
 
-	case BRACKETCLOSE:
+	case BracketClose:
 		// list finished
 		return parent, nil
 
-	case EQUAL, COLON:
+	case Equal, Colon:
 		t = nil
 		goto restart
 	}
@@ -187,46 +188,39 @@ restart:
 			return nil, err
 		}
 	}
-
 	switch t.state {
-	case BRACKETCLOSE:
+	case BracketClose:
 		// list finished
 		return parent, nil
-
-	case SEMICOL, COLON, EQUAL:
+	case Semicolon, Colon, Equal:
 		// no value, let parent handle it
 		return nil, fmt.Errorf("invalid tag %s line %d",
 			string(t.val), p.scanner.line)
-	case COMMA:
+	case Comma:
 		t = nil
 		goto restart
-
 	default:
 		// append child
-		res, err := p.parseValue(t, nil)
-		if err != nil {
+		var res interface{}
+		if res, err = p.parseValue(t, nil); err != nil {
 			return nil, err
-		} else {
-			if resTag, ok := res.(*tag); ok {
-				// result is a tag; parseValue didn't handle it
-				if resTag.state == BRACKETCLOSE {
-					parent = append(parent, string(resTag.val))
-					return parent, nil
-				} else {
-					return nil, fmt.Errorf("Unexpected tag %s, line %d\n",
-						string(resTag.val), p.scanner.line)
-				}
-			}
-
-			parent = append(parent, res)
 		}
-		t = nil
+		if resTag, ok := res.(*tag); ok {
+			// result is a tag; parseValue didn't handle it
+			if resTag.state == BracketClose {
+				ret = append(parent, string(resTag.val))
+			} else {
+				err = fmt.Errorf("unexpected tag %s, line %d",
+					string(resTag.val), p.scanner.line)
+			}
+			return
+		}
+		parent, t = append(parent, res), nil
 		goto restart
 	}
 }
 
 func (p *Decoder) parse(t *tag, parent interface{}) (ret interface{}, err error) {
-
 restart:
 	if t == nil {
 		t, err = p.nextTag()
@@ -234,33 +228,28 @@ restart:
 			return nil, err
 		}
 	}
-
 	switch t.state {
-	case TAG, QUOTE, VQUOTE, SLASH:
-
+	case Tag, Quote, VQuote, Slash:
 		mapParent, ok := parent.(map[string]interface{})
 		if !ok {
 			return nil, errParentNotMap
 		}
 
-		kOrderIntf, ok := mapParent[KeyOrder]
-		var kOrder []string
+		keyOrderIntf, ok := mapParent[KeyOrder]
+		var keyOrder []string
 		if !ok {
 			if ExportKeyOrder {
 				// only initialize if requested
-				kOrder = make([]string, 0, 16)
+				keyOrder = make([]string, 0, 16)
 			}
-		} else {
-			kOrder, ok = kOrderIntf.([]string)
-			if !ok {
-				return nil, errKeyOrderNotSlice
-			}
+		} else if keyOrder, ok = keyOrderIntf.([]string); !ok {
+			return nil, errKeyOrderNotSlice
 		}
 
 		res, err := p.parseValue(nil, nil)
 		if err != nil {
 			if resTag, ok := res.(*tag); ok {
-				if resTag.state == SEMICOL {
+				if resTag.state == Semicolon {
 					// no value for key, make it == null
 					res = nil
 				}
@@ -269,7 +258,7 @@ restart:
 			}
 		} else if resTag, ok := res.(*tag); ok {
 			// result is a tag; parseValue didn't handle it
-			if resTag.state != BRACECLOSE {
+			if resTag.state != BraceClose {
 				t = resTag
 				goto restart
 			}
@@ -290,34 +279,28 @@ restart:
 			}
 		} else {
 			// doesn't exist
-			if cap(kOrder) != 0 {
+			if cap(keyOrder) != 0 {
 				// only update KeyOrder if it was initialized
-				kOrder = append(kOrder, k)
-				mapParent[KeyOrder] = kOrder
+				keyOrder = append(keyOrder, k)
+				mapParent[KeyOrder] = keyOrder
 			}
 			mapParent[k] = res
 		}
-		if t.state == BRACECLOSE {
+		if t.state == BraceClose {
 			// map completed
 			return parent, nil
 		}
-
 		// done for this tag; go to next
 		t = nil
 		goto restart
-
-	case SEMICOL:
+	case Semicolon:
 		t = nil
 		goto restart
-
-	case MLSTRING:
+	case MlString:
 		// shouldn't happen
-		return nil, errUnexpectedMultiline
-
-	case BRACEOPEN:
-		// {
+		err = errUnexpectedMultiline
+	case BraceOpen:
 		// If parent is not a map and not nil, then error
-
 		var mapParent interface{}
 		var ok bool
 		if parent == nil {
@@ -328,22 +311,20 @@ restart:
 			}
 		}
 		return p.parse(nil, mapParent)
-
-	case BRACECLOSE:
+	case BraceClose:
 		// map finished
-		return parent, nil
-
-	case BRACKETOPEN:
+		ret = parent
+	case BracketOpen:
 		return p.parseList(nil, make([]interface{}, 0, 32))
-
-	case BRACKETCLOSE:
+	case BracketClose:
 		// list finished
-		return parent, nil
+		ret = parent
 	}
 
-	return nil, nil
+	return
 }
 
+// Decode starts parsing of provided reader and returns result map
 func (p *Decoder) Decode() (map[string]interface{}, error) {
 	_, err := p.parse(nil, p.ucl)
 	if errors.Is(err, io.EOF) {
